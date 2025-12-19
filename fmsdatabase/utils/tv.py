@@ -35,6 +35,7 @@ from .general_utils import (
     TVParts,
     TVTestParameters,
     TVTvacParameters,
+    TVTvacParameters2,
     compare_distributions,
     delete_json_file,
     load_from_json,
@@ -57,7 +58,7 @@ class TVListener(FileSystemEventHandler):
     tv_data : TVData
         Instance of TVData containing extracted data from the processed file and extraction methods.
     """
-    def __init__(self, path: str = "TV_test_runs"):
+    def __init__(self, path: str = r"TV_test_runs"):
         self.path = path
         self.observer = Observer()
         self.observer.schedule(self, path, recursive=True)
@@ -75,60 +76,62 @@ class TVListener(FileSystemEventHandler):
             TVParts.HOLDER_1.value: "20025.12.15-R3",
             TVParts.HOLDER_2.value: "20025.12.16-R3"
         }
+        print(self.path)
         
     def on_created(self, event):
+        print('oke')
         if event.is_directory:
+            print('jaman')
             return
 
-        if self.path.endswith("TV_test_runs"):
-            if event.src_path.endswith('.xls'):
-                relative_path = os.path.relpath(event.src_path, self.path)
-                path_parts = relative_path.split(os.sep)
+        if event.src_path.endswith('.xls'):
+            relative_path = os.path.relpath(event.src_path, self.path)
+            path_parts = relative_path.split(os.sep)
 
-                if len(path_parts) < 2:
-                    print(f"Ignoring file not in expected subfolder structure: {event.src_path}")
-                    return
+            # if len(path_parts) < 2:
+            #     print(f"Ignoring file not in expected subfolder structure: {event.src_path}")
+            #     return
 
-                test_valve_folder = path_parts[0]  
-                try:
-                    self.TV_id = test_valve_folder.split('#')[1]
-                except IndexError:
-                    print(f"Could not parse TV_id from folder name: {test_valve_folder}")
-                    return
+            test_valve_folder = path_parts[0]  
+            try:
+                self.TV_id = test_valve_folder.split('#')[1]
+            except IndexError:
+                print(f"Could not parse TV_id from folder name: {test_valve_folder}")
+                return
 
-                self.welded = None
+            self.welded = None
 
-                print(f"New TV test results file detected: {event.src_path}")
-                if hasattr(self, '_processing') and self._processing:
-                    print("A file is already being processed. Skipping this one.")
-                    return
+            print(f"New TV test results file detected: {event.src_path}")
+            if hasattr(self, '_processing') and self._processing:
+                print("A file is already being processed. Skipping this one.")
+                return
 
-                self._processing = True
-                try:
-                    self.test_reference = os.path.basename(event.src_path).split('_LP_')[0]
+            self._processing = True
+            try:
+                self.test_reference = os.path.basename(event.src_path).split('_LP_')[0]
 
-                    self.tv_data = TVData(test_results_file=event.src_path)
-                    self.tv_data.extract_tv_test_results_from_excel()
-                    self.processed = True
-                finally:
-                    self._processing = False
-            elif event.src_path.endswith('.csv'):
-                match = re.search(r"(\d+_\d+_\d+)\s(\d+_\d+_\d+)", event.src_path)
-                if match:
-                    self.test_reference = f"{match.group(1)}_{match.group(2)}"
-                
-                print(f"New TV test results file detected: {event.src_path}")
-                if hasattr(self, '_processing') and self._processing:
-                    print("A file is already being processed. Skipping this one.")
-                    return
-
-                self._processing = True
-                try:
-                    self.tv_data = TVData(csv_file=event.src_path)
-                    self.tv_data.extract_tv_tvac_results()
-                    self.processed = True
-                finally:
-                    self._processing = False
+                self.tv_data = TVData(test_results_file=event.src_path)
+                self.tv_data.extract_tv_test_results_from_excel()
+                self.processed = True
+            finally:
+                self._processing = False
+        elif event.src_path.endswith('.csv'):
+            match = re.search(r"(\d+_\d+_\d+)\s(\d+_\d+_\d+)", event.src_path)
+            if match:
+                self.test_reference = f"{match.group(1)}_{match.group(2)}"
+            
+            print(f"New TV test results file detected: {event.src_path}")
+            if hasattr(self, '_processing') and self._processing:
+                print("A file is already being processed. Skipping this one.")
+                return
+            
+            self._processing = True
+            try:
+                self.tv_data = TVData(csv_file=event.src_path)
+                self.tv_data.extract_tv_tvac_results()
+                self.processed = True
+            finally:
+                self._processing = False
                 
         elif self.path.endswith("certifications"):
 
@@ -230,27 +233,40 @@ class TVData:
         self.booking_date = None
         self.csv_file = csv_file
         self.tvac_columns = [i.value for i in TVTvacParameters]
+        self.tvac_columns2 = [i.value for i in TVTvacParameters2]
         self.test_parameter_names = [param.value for param in TVTestParameters]
         self.alarm_columns = [param.value for param in TVTvacParameters if 'ALARM' in param.name]
+        self.alarm_columns2 = [param.value for param in TVTvacParameters2 if 'ALARM' in param.name]
 
     def extract_tv_tvac_results(self) -> None:
         """
         Extracts TVAC test results from the CSV file.
         Uses pandas to read the CSV, processes the time column, and stores the results in test_parameters attribute.
         """
-
-        df = pd.read_csv(
-            self.csv_file,
-            sep=None,
-            engine='python',
-            encoding="utf-16",
-            skiprows=16,
-            names=self.tvac_columns
-        )
-
-        for col in self.alarm_columns:
-            if col in df.columns:
-                df.drop(columns=[col], inplace=True)
+        try:
+            df = pd.read_csv(
+                self.csv_file,
+                sep=None,
+                engine='python',
+                encoding="utf-16",
+                skiprows=16,
+                names=self.tvac_columns
+            )
+            for col in self.alarm_columns:
+                if col in df.columns:
+                    df.drop(columns=[col], inplace=True)
+        except:
+            df = pd.read_csv(
+                self.csv_file,
+                sep=None,
+                engine='python',
+                encoding="utf-16",
+                skiprows=18,
+                names=self.tvac_columns2
+            )
+            for col in self.alarm_columns2:
+                if col in df.columns:
+                    df.drop(columns=[col], inplace=True)
 
         df.drop(columns=['scan'], inplace=True)
 
@@ -1268,7 +1284,7 @@ class TVLogicSQL:
         }
         self.temp_range = (94, 100)
 
-    def listen_to_tv_test_results(self, tv_test_runs: str = "TV_test_runs") -> None:
+    def listen_to_tv_test_results(self, tv_test_runs: str = r"TV_test_runs") -> None:
         """
         Listen for new TV test results and process them.
         
@@ -1804,6 +1820,7 @@ class TVLogicSQL:
                     results[key].append(value)
             current_test_date = self.test_id_to_datetime(self.test_reference)
             existing_cycles = session.query(TVTvac).filter_by(tv_id=self.tv_id, cycles=self.cycle_amount).first()
+            print(existing_cycles)
             if existing_cycles:
                 test_date = self.test_id_to_datetime(existing_cycles.test_id)
                 if current_test_date > test_date:
@@ -2558,6 +2575,7 @@ class TVLogicSQL:
         if not electrical_data:
             print("No electrical data provided.")
             return
+        electrical_data = os.listdir(electrical_data)
         sorted_files = sorted(
             electrical_data,
             key=lambda f: int(f.split(' ')[-1].split('.')[-2])
@@ -2565,7 +2583,7 @@ class TVLogicSQL:
 
         holder_certs = (
             [['C25-0081', 'C25-0082'] for _ in range(10)] +
-            [['C25-0164', 'C25-0165'] for _ in range(7)]
+            [['C25-0164', 'C25-0165'] for _ in range(10)]
         )
 
         session: "Session" = self.Session()
@@ -2634,6 +2652,7 @@ class TVLogicSQL:
             # self.fms.print_table(TVStatus)
         except Exception as e:
             print(f"Error adding electrical data: {str(e)}")
+            traceback.print_exc()
             session.rollback()
         finally:
             session.close() 

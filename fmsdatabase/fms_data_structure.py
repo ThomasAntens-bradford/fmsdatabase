@@ -5,6 +5,7 @@ import time
 import threading
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 # Third-party
 import fitz
@@ -190,12 +191,16 @@ class FMSDataStructure:
     """
     
     def __init__(self, excel_extraction: bool = True, test_path: str = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing",
-                 absolute_data_dir: str = r"C:\\Users\\TANTENS\\Documents\\fms_data_collection"):
+                 absolute_data_dir: str = r"C:\\Users\\TANTENS\\Documents\\fms_data_collection", local = True) -> None:
 
-        PACKAGE_DIR = os.path.dirname(__file__)
-        db_path = os.path.join(PACKAGE_DIR, "FMS_DataStructure.db")
+        if local:
+            local_appdata = Path(os.environ.get("LOCALAPPDATA", os.getcwd()))
+            app_data_dir = local_appdata / "FMSDatabase"
+            app_data_dir.mkdir(parents=True, exist_ok=True)
+            self.db_path = app_data_dir / "FMS_DataStructure.db"
 
-        self.engine = create_engine(f"sqlite:///{db_path}")
+            # Initialize the engine
+            self.engine = create_engine(f"sqlite:///{self.db_path}")
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         self.default_manifold_drawing = "20025.10.08-R4"    
@@ -211,7 +216,7 @@ class FMSDataStructure:
         year = datetime.now().year
         base_path = r"\\be.local\Doc\DocWork\Certificaten Bradford"
         self.test_path = test_path
-        self.fms_status_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS Status Overview_V0.xlsx"
+        self.fms_status_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\LP FMS Status Overview_V0.xlsx"
         self.anode_fr_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS FR Testing - 6\FMS-LP-BE-TRS-0021-i1-0 - FR Testing - Anode.xlsx"
         self.cathode_fr_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS FR Testing - 6\FMS-LP-BE-TRS-0021-i1-0 - FR Testing - Cathode.xlsx"
         self.tv_assembly_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\Thermal Valve Assembly Testing\TV Assembly Procedure_V1.xlsx"
@@ -356,7 +361,7 @@ class FMSDataStructure:
         self.hpiv_data_thread = threading.Thread(target=self.hpiv_sql.listen_to_hpiv_data, args=(hpiv_data_packages,), daemon=False)
         self.hpiv_data_thread.start()
 
-    def listen_to_tv_test_results(self, tv_test_runs: str = "") -> None:
+    def listen_to_tv_test_results(self, tv_test_runs: str = r"") -> None:
         """
         Start listening for new TV test results.
         This method initializes a thread to monitor the TV test results
@@ -365,9 +370,10 @@ class FMSDataStructure:
             tv_test_runs (str): Path to the directory containing TV test runs.
         """
         if not tv_test_runs:
-            tv_test_runs = os.path.join(self.absolute_data_dir, "TV_test_runs")
-        self.tv_test_thread = threading.Thread(target=self.tv_sql.listen_to_tv_test_results, args=(tv_test_runs,), daemon=False)
-        self.tv_test_thread.start()
+            tv_test_runs = os.path.join(self.absolute_data_dir, r"TV_test_runs")
+        self.tv_sql.listen_to_tv_test_results(tv_test_runs = tv_test_runs)
+        # self.tv_test_thread = threading.Thread(target=self.tv_sql.listen_to_tv_test_results, args=(tv_test_runs,), daemon=False)
+        # self.tv_test_thread.start()
 
     def add_tv_electrical_data(self, electrical_data: str = "") -> None:
         """
@@ -377,6 +383,8 @@ class FMSDataStructure:
         """
         if not electrical_data:
             electrical_data = os.path.join(self.absolute_data_dir, "Electrical_data")
+            print(electrical_data)
+        print(electrical_data)
         self.tv_sql.add_electrical_data(electrical_data = electrical_data)
 
     def listen_to_lpt_calibration(self, lpt_calibration: str = "") -> None:
@@ -847,7 +855,7 @@ class FMSDataStructure:
 
         session.commit()
 
-    def add_hpiv_data(self, hpiv_data_packages: str = "") -> None:
+    def add_hpiv_data(self, hpiv_data_packages: str = "", output_folder: str = "") -> None:
         """
         Add HPIV data from PDF files to the database.
         This method scans the HPIV data packages directory for PDF files,
@@ -855,13 +863,18 @@ class FMSDataStructure:
         extracted data.
         Args:
             hpiv_data_packages (str): Path to the directory containing HPIV data packages.
+            output_folder (str): Path to the output folder for the extracted HPIV reports.
         """
         if not hpiv_data_packages:
             hpiv_data_packages = os.path.join(self.absolute_data_dir, "HPIV_data_packages")
         data_packages = [os.path.join(hpiv_data_packages, f) for f in os.listdir(hpiv_data_packages) if f.lower().endswith('.pdf')]
+        if not output_folder:
+            output_folder = os.path.join(self.absolute_data_dir, "extracted_HPIV_reports")
+            if not os.path.exists(output_folder):
+                os.makedirs(output_folder)
         for package in data_packages:
             hpiv_data = HPIVData(pdf_file=package) 
-            hpiv_data.extract_hpiv_data()
+            hpiv_data.extract_hpiv_data(output_folder=output_folder)
             self.hpiv_sql.update_hpiv_characteristics(hpiv_data)
             self.hpiv_sql.update_hpiv_revisions(hpiv_data)
 
@@ -912,7 +925,7 @@ class FMSDataStructure:
             self.fms_sql.add_fms_assembly_data(fms_data)
             self.fms_sql.update_fms_main_test_results(fms_data)
 
-    def add_fms_functional_test_data(self, test_path: str = "") -> None:
+    def add_fms_functional_test_data(self, test_path: str = "", fms_ids: list[str] = []) -> None:
         """
         Add FMS main functional test data from the test reports to the database.
         This method scans the FMS test results directory for Excel files,
@@ -920,6 +933,7 @@ class FMSDataStructure:
         extracted data.
         Args:
             test_path (str): Path to the directory containing FMS functional test results.
+            fms_id (str): Specific FMS ID to process. If empty, process all.
         """
         slope_files = {}
         closed_loop_files = {}
@@ -930,7 +944,7 @@ class FMSDataStructure:
         if not test_path:
             test_path = self.test_path
         
-        serials = ["24-100", "24-101", "24-102", "24-188", "24-189", "24-190"] + [f"25-{i:03d}" for i in range(45, 65)]
+        serials = fms_ids if fms_ids else ["24-100", "24-101", "24-102", "24-188", "24-189", "24-190"] + [f"25-{i:03d}" for i in range(45, 65)]
         # serials = ["25-062"]
 
         # Helper function to find first match in folder

@@ -287,6 +287,28 @@ class TVTvacParameters(Enum):
     TV_CURRENT = "tv_current"
     ALARM_121 = "alarm_121"
 
+class TVTvacParameters2(Enum):
+    SCAN = "scan"
+    TIME = "time"
+    OUTLET_ELBOW = "outlet_elbow"
+    ALARM_101 = "alarm_101"
+    OUTLET_TEMP_1 = "outlet_temp_1"
+    ALARM_102 = "alarm_102"
+    INTERFACE_TEMP = "interface_temp"
+    ALARM_103 = "alarm_103"
+    OUTLET_TEMP_2 = "outlet_temp_2"
+    ALARM_104 = "alarm_104"
+    IF_PLATE_1 = "if_plate_1"
+    ALARM_105 = "alarm_105"
+    IF_PLATE_2 = "if_plate_2"
+    ALARM_106 = "alarm_106"
+    VACUUM = "vacuum"
+    ALARM_109 = "alarm_109"
+    TV_VOLTAGE = "tv_voltage"
+    ALARM_110 = "alarm_110"
+    TV_CURRENT = "tv_current"
+    ALARM_121 = "alarm_121"
+
 class HPIVParameters(Enum):
     """
     Enum defining all HPIV (High Pressure Isolation Valve) test parameters.

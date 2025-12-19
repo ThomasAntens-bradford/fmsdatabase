@@ -178,6 +178,9 @@ class FMSData:
             test_type (str): Type of test being processed.
             test_id (int): Test ID for the current dataset.
             selected_fms_id (int): Selected FMS ID for data processing.
+            response_times (dict): Response times for lpt set points.
+            response_regions (dict): Response regions in time for lpt set points.
+            slope_correction (float): Correction factor w.r.t. the specified inlet pressure.
 
         Flow test parameters:
             lpt_pressures (list): List of LPT pressures.
@@ -244,7 +247,7 @@ class FMSData:
                  lpt_voltages: list[float] = [10, 15, 17, 20, 24, 25, 30, 35], min_flow_rates: list[float] = [0.61, 1.23, 1.51, 1.85, 2.40, 2.43, 3.13, 3.72], 
                  max_flow_rates: list[float] = [0.96, 1.61, 1.9, 2.34, 2.93, 3.07, 3.81, 4.54], csv_files: list[str] = None, 
                  status_file: str = 'Excel_templates/FMS_status_template.xlsx', range12_low: list[float] = [13, 41], range24_low: list[float] = [19, 54],
-                 range12_high: list[float] = [25, 95], range24_high: list[float] = [35, 140], initial_flow_rate: float = 0.04, lpt_set_points: list[float] = [1, 1.625, 2.25, 1.625, 1, 0.2]):
+                 range12_high: list[float] = [25, 95], range24_high: list[float] = [35, 140], initial_flow_rate: float = 0.035, lpt_set_points: list[float] = [1, 1.625, 2.25, 1.625, 1, 0.2]):
 
         self.flow_test_file = flow_test_file
         self.pdf_file = pdf_file
@@ -275,6 +278,8 @@ class FMSData:
         self.group_by_voltage = False
         self.project_ref = None
         self.response_times: dict[str, list] = {}
+        self.response_regions: dict[str, list] = {}
+        self.slope_correction = 1
         self.test_parameter_names = [param.value for param in FMSFlowTestParameters]
         self.vibration_path = ""
         self.tvac_map = {
@@ -493,27 +498,21 @@ class FMSData:
     def extract_tvac_from_csv(self) -> None:
         """
         Extract TVAC cycle data from CSV files and store in functional_test_results.
-            Creates a Pandas DataFrame from the CSV files and processes the data.
+        Creates a Pandas DataFrame from the CSV files and processes the data.
+        Time is normalized so the earliest timestamp across all CSVs starts at 0 seconds.
         """
         self.tvac_df = pd.DataFrame()
+        start_times = []
+
         for csv_file in self.csv_files:
-            # with open(csv_file, 'r', encoding='utf-16') as f:
-            #     lines = f.readlines()
-
-            # for i, line in enumerate(lines):
-            #     if line.strip().startswith('Scan,Time'):
-            #         header_row = i
-            #         break
-            # else:
-            #     raise ValueError("Could not find header row starting with 'Scan,Time'")
-
             df = pd.read_csv(
                 csv_file,
-                sep=None,  # let pandas sniff comma, tab, etc.
+                sep=None,
                 engine='python',
                 encoding='utf-16',
                 on_bad_lines='skip'
             )
+
             if any('name:' in str(col).lower() for col in df.columns):
                 df = pd.read_csv(
                     csv_file,
@@ -521,25 +520,28 @@ class FMSData:
                     engine='python',
                     encoding='utf-16',
                     on_bad_lines='skip',
-                    skiprows = 18
+                    skiprows=18
                 )
+
             df.ffill(inplace=True)
             df.drop('Scan', axis=1, inplace=True)
+
             col_map = {col: self.tvac_map[col] for col in df.columns if col in self.tvac_map}
             df = df[list(col_map.keys())]
             df.rename(columns=col_map, inplace=True)
-            # Sort by time column before concatenating
-            time_col = FMSTvacParameters.TIME.value
-            df[time_col] = df[time_col].str.replace(r'(?<=\d{2}:\d{2}:\d{2}):', '.', regex=True)
-            df[time_col] = pd.to_datetime(df[time_col]).dt.strftime('%Y-%m-%d %H:%M:%S')
 
+            time_col = FMSTvacParameters.TIME.value
+            df[time_col] = pd.to_datetime(df[time_col].str.replace(r'(?<=\d{2}:\d{2}:\d{2}):', '.', regex=True))
+
+            start_times.append(df[time_col].iloc[0])
             self.tvac_df = pd.concat([self.tvac_df, df], ignore_index=True)
 
-        time_col = FMSTvacParameters.TIME.value
-        # t0 = self.tvac_df[time_col].iloc[0]
-        # t_last = self.tvac_df[time_col].iloc[-1]
-        
-        base_name = os.path.basename(csv_file)
+        # Normalize time relative to the earliest timestamp across all CSVs
+        t0 = min(start_times)
+        self.tvac_df[time_col] = (self.tvac_df[time_col] - t0).dt.total_seconds()
+
+        # Determine test_id based on last CSV file name
+        base_name = os.path.basename(self.csv_files[-1])
         date_match = re.search(r'(\d{1,2}_\d{1,2}_\d{4})', base_name)
         time_match = re.findall(r'(\d{1,2}_\d{1,2}_\d{1,2})', base_name)[-1]
 
@@ -549,8 +551,8 @@ class FMSData:
             self.test_id = dt.strftime("%Y_%m_%d_%H-%M-%S")
         else:
             self.test_id = base_name
+
         self.functional_test_results = self.tvac_df.to_dict(orient='records')
-        
         # print(self.tvac_df.head())
 
     def plot_tvac_cycle(self, serial: str = '25-050') -> None:
@@ -668,10 +670,14 @@ class FMSData:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
         clp = df[fms.CLOSED_LOOP_PRESSURE.value].to_numpy()
-        relevant_idx = np.where(clp >= 1)[0]
 
-        if len(relevant_idx) > 0:
-            start_idx = max(relevant_idx[0] - 40, 0)  # take a few rows before
+        window = 90
+        valid_start_indices = np.where(
+            np.convolve((clp >= 1).astype(int), np.ones(window, dtype=int), mode="valid") == window
+        )[0]
+
+        if len(valid_start_indices) > 0:
+            start_idx = max(valid_start_indices[0] - 40, 0)
             df = df.iloc[start_idx:].reset_index(drop=True)
 
         df[fms.LOGTIME.value] = df[fms.LOGTIME.value] - df[fms.LOGTIME.value].iloc[0]
@@ -679,9 +685,9 @@ class FMSData:
         self.functional_test_results = df.to_dict(orient='records')
         
         self.outlet_pressure = float(df[fms.PC3_SETPOINT.value].iloc[0]) * 1000
-        mean_inlet = df[fms.INLET_PRESSURE.value].mean()-1.5 # small correction
-        self.inlet_pressure = round(mean_inlet / 10) * 10
-        self.inlet_pressure = 10 if self.inlet_pressure < 100 else 190 #TODO: Change and discuss
+        mean_inlet_pressure = df[fms.INLET_PRESSURE.value].mean()
+        self.inlet_pressure = round(mean_inlet_pressure / 10) * 10
+        self.inlet_pressure = 10 if self.inlet_pressure < 100 else 190
         self.temperature = df[fms.LPT_TEMP.value].mean()
         temperature_check = [-15, 22, 70]
         temperature_types = [FunctionalTestType.COLD, FunctionalTestType.ROOM, FunctionalTestType.HOT]
@@ -701,8 +707,10 @@ class FMSData:
                 flows = df[FMSFlowTestParameters.TOTAL_FLOW.value].to_numpy()
                 powers = df[FMSFlowTestParameters.AVG_TV_POWER.value].to_numpy()
                 self.flow_power_slope = self.get_flow_power_slope(flows, powers)
+                self.slope_correction = self.inlet_pressure / mean_inlet_pressure
         else:
             self.tv_slope = None
+
         self.df = df
         if self.test_type == 'fr_characteristics':
             self.group_by_lpt_pressures()
@@ -2185,6 +2193,7 @@ class FMSLogicSQL:
             self.flow_power_slope = fms_data.flow_power_slope
             self.response_times = fms_data.response_times
             self.response_regions = fms_data.response_regions
+            self.slope_correction = fms_data.slope_correction
             self.remark = 'Automated entry'
             self.functional_test_results = fms_data.functional_test_results
         try:
@@ -2227,7 +2236,7 @@ class FMSLogicSQL:
 
             if self.functional_test_results and self.selected_fms_id:
                 flow_test_entry = session.query(FMSFunctionalTests).filter_by(fms_id = self.selected_fms_id, test_id = self.test_id).first()
-                flow_check = session.query(FMSFunctionalTests).all()
+                flow_check = session.query(FMSFunctionalTests).filter_by(fms_id = self.selected_fms_id).all()
                 if not flow_check:
                     status_update = FMSProgressStatus.TESTING
                 else:
@@ -2252,7 +2261,8 @@ class FMSLogicSQL:
                     flow_test_entry.intercept24 = self.flow_power_slope.get('intercept24', None)
                     flow_test_entry.response_times = self.response_times
                     flow_test_entry.response_regions = self.response_regions
-                    fms_main = flow_test_entry.fms_main
+                    flow_test_entry.slope_correction = self.slope_correction
+                    fms_main: FMSMain = flow_test_entry.fms_main
                     if status_update and fms_main:
                         fms_main.status = status_update if not (fms_main.status == FMSProgressStatus.SHIPMENT or fms_main.status == FMSProgressStatus.DELIVERED or fms_main.status == FMSProgressStatus.SCRAPPED) else fms_main.status
                 else:
@@ -2268,7 +2278,8 @@ class FMSLogicSQL:
                         remark=self.remark,
                         date=date,
                         response_times=self.response_times,
-                        response_regions=self.response_regions
+                        response_regions=self.response_regions,
+                        slope_correction=self.slope_correction,
                         **self.flow_power_slope
                     )
                     session.add(flow_test_entry)
@@ -2437,8 +2448,10 @@ class FMSLogicSQL:
             if self.functional_test_results and self.selected_fms_id:
                 tvac_check = session.query(FMSTvac).filter_by(fms_id=self.selected_fms_id, test_id=self.test_id).all()
                 if tvac_check:
-                    print("This test has already been registered in the database")
-                    return
+                    # print("This test has already been registered in the database")
+                    for entry in tvac_check:
+                        session.delete(entry)
+                    # return
                 fms_entry = session.query(FMSMain).filter_by(fms_id=self.selected_fms_id).first()
                 if not fms_entry:
                     tv_check = session.query(TVStatus).filter_by(allocated = self.selected_fms_id).first()

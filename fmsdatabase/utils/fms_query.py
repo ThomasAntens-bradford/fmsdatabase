@@ -747,26 +747,35 @@ class FMSQuery:
             self.temperature = test_run.trp_temp
             self.inlet_pressure = test_run.inlet_pressure
             self.inlet_pressure = 10 if self.inlet_pressure < 100 else 190
+            correction_factor = test_run.slope_correction
             self.outlet_pressure = test_run.outlet_pressure
+            plot_output = widgets.Output()
+            correction_checkbox = widgets.Checkbox(
+                value = False,
+                description = 'Show Inlet Pressure Correction:',
+                indent = False,
+                label_width = '150px'
+            )
             test_results: list[FMSFunctionalResults] = test_run.functional_results
             if test_results:
                 self.logtime = [res.logtime for res in test_results if res.parameter_name == FMSFlowTestParameters.ANODE_FLOW.value] or None
-
-                df = pd.DataFrame([{
-                    'parameter_name': res.parameter_name,
-                    'parameter_value': res.parameter_value,
-                    'parameter_unit': getattr(res, 'parameter_unit', None),
-                    'logtime': res.logtime
-                } for res in test_results])
 
                 params = [
                     FMSFlowTestParameters.AVG_TV_POWER.value,
                     FMSFlowTestParameters.TOTAL_FLOW.value,
                     FMSFlowTestParameters.LPT_PRESSURE.value,
-                    FMSFlowTestParameters.TV_PT1000.value
+                    FMSFlowTestParameters.TV_PT1000.value,
                 ]
 
-                df_filtered = df[df['parameter_name'].isin(params)]
+                df_filtered = pd.DataFrame([{
+                    'parameter_name': res.parameter_name,
+                    'parameter_value': res.parameter_value,
+                    'parameter_unit': getattr(res, 'parameter_unit', None),
+                    'logtime': res.logtime
+                } for res in test_results if res.parameter_name in params])
+
+
+                # df_filtered = df[df['parameter_name'].isin(params)]
 
                 def get_values(param_name: str) -> list | None:
                     vals = df_filtered.loc[df_filtered['parameter_name'] == param_name, 'parameter_value'].tolist()
@@ -792,12 +801,22 @@ class FMSQuery:
                 self.units = {param: get_unit(param) for param in params}
 
                 image = self.plot_open_loop(serial=self.fms_entry.fms_id, gas_type=self.gas_type, plot=plot)
-                if plot and 'slope' in test_type.lower():
-                    flows = np.array(self.total_flow)
-                    powers = np.array(self.tv_powers)
-                    flow_power_slope = self.get_flow_power_slope(flows, powers)
 
-                    self.check_tv_slope(**flow_power_slope)
+                def on_correction_change(change: dict):
+                    correction = correction_checkbox.value
+                    total_flow = np.array(self.total_flow) / correction_factor if correction else np.array(self.total_flow)
+                    if plot and 'slope' in test_type.lower():
+                        flows = total_flow
+                        powers = np.array(self.tv_powers)
+                        flow_power_slope = self.get_flow_power_slope(flows, powers)
+                        with plot_output:
+                            plot_output.clear_output()
+                            self.check_tv_slope(**flow_power_slope, correction = correction, serial = self.fms_entry.fms_id)
+
+                correction_checkbox.observe(on_correction_change, names='value')
+                display(correction_checkbox)
+                display(plot_output)
+                on_correction_change({})
                 return image
 
     def get_flow_power_slope(self, flows: list[float], powers: list[float], num_points: int = 300) -> dict:
@@ -867,7 +886,8 @@ class FMSQuery:
         return array_dict
 
     def check_tv_slope(self, tv_power_12: np.ndarray, tv_power_24: np.ndarray, total_flows_12: np.ndarray, \
-                       total_flows_24: np.ndarray, slope12: float, slope24: float, intercept12: float, intercept24: float) -> None:
+                       total_flows_24: np.ndarray, slope12: float, slope24: float, intercept12: float, intercept24: float, correction: bool = False,\
+                        serial: str = "") -> None:
         """
         Plot the flow-power slopes and check against specifications.
         Args:
@@ -906,7 +926,8 @@ class FMSQuery:
             plt.text(0.05, 0.95, textstr, transform=plt.gca().transAxes,
                     fontsize=10, verticalalignment='top', horizontalalignment='left',
                     bbox=props)
-            plt.title(f'Total Flow vs TV Power (1-2 mg/s)\nTRP temp: {self.temperature} [degC], Inlet Pressure: {self.inlet_pressure} [barA]')
+            plt.title(f'Total Flow {serial} vs TV Power (1-2 mg/s)\nTRP temp: {self.temperature} [degC], Inlet Pressure: {self.inlet_pressure} [barA]' if not correction \
+                else f'Total Flow {serial} vs TV Power (1-2 mg/s)\nTRP temp: {self.temperature} [degC], Inlet Pressure: {self.inlet_pressure} [barA]' + ' (Corrected)')
             plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.3), ncol=2)
             plt.grid(True)
 
@@ -927,7 +948,8 @@ class FMSQuery:
                     fontsize=10, verticalalignment='top', horizontalalignment='left',
                     bbox=props)    
             plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.3), ncol=2)
-            plt.title(f'Total Flow vs TV Power (2-4 mg/s)\nTRP temp: {self.temperature} [degC], Inlet Pressure: {self.inlet_pressure} [barA]')
+            plt.title(f'Total Flow {serial} vs TV Power (2-4 mg/s)\nTRP temp: {self.temperature} [degC], Inlet Pressure: {self.inlet_pressure} [barA]' if not correction \
+                    else f'Total Flow {serial} vs TV Power (2-4 mg/s)\nTRP temp: {self.temperature} [degC], Inlet Pressure: {self.inlet_pressure} [barA]' + ' (Corrected)')
             plt.grid(True)   
             plt.tight_layout()
             plt.show()
@@ -1049,7 +1071,7 @@ class FMSQuery:
                     tau_list = self.response_times.get(key, [])
                     for i, tau in enumerate(tau_list[:3]):
                         row[f"{i+1}_tau [s]"] = tau
-                    row["Actual Time [s]"] = tau_list[-1] 
+                    row["Actual Time [s]"] = tau_list[-1] if tau_list else "N/A"
                     if not all(np.isnan(t) for t in tau_list):
                         test_info.append(row)
                     else:
@@ -1282,8 +1304,7 @@ class FMSQuery:
             trp1 = tr.trp1
             trp2 = tr.trp2
 
-        time_dt = [datetime.strptime(t, '%Y-%m-%d %H:%M:%S') for t in time]
-        time_hours = np.array([(t - time_dt[0]).total_seconds() / 3600.0 for t in time_dt])
+        time_hours = np.array(time) / 3600.0 
         trp1 = np.array(trp1)
         trp2 = np.array(trp2)
 
@@ -1747,7 +1768,7 @@ class FMSQuery:
                         tau_list = response_times.get(key, [])
                         for i, tau in enumerate(tau_list[:3]):
                             row[f"{i+1}_tau [s]"] = tau
-                        row["Actual Time [s]"] = tau_list[-1]
+                        row["Actual Time [s]"] = tau_list[-1] if tau_list else "N/A"
                         if not all(t == np.nan for t in tau_list):
                             test_info.append(row)
                         else:
@@ -1804,163 +1825,181 @@ class FMSQuery:
             grouped_functional_tests (dict[str, dict[str, list[FMSFunctionalTests]]]): 
                 Grouped functional test entries by test type, pressure and temperature.
         """
-        plot_dict = {}
-        table_rows = []
         fms_id = self.fms_entry.fms_id
 
         if len(grouped_functional_tests) == 0:
             print("No functional tests found in the database.")
             return
 
-        first_hot_date = next((t.date for type, temp_groups in grouped_functional_tests.items() for temp_type, tests in temp_groups.items() for t in tests if "hot" in temp_type.value and t.fms_id == fms_id), None)
-        for test_type, temp_groups in grouped_functional_tests.items():
-            if "slope" not in test_type.value:
-                continue
-            
-
-            first_room = True
-            for temp_type, tests in temp_groups.items():
-                slope12s = []
-                slope24s = []
-                min_range_12 = self.range12_low[0] if "low" in test_type.value else self.range12_high[0]
-                min_range_24 = self.range24_low[0] if "low" in test_type.value else self.range24_high[0]
-                max_range_12 = self.range12_low[1] if "low" in test_type.value else self.range12_high[1]
-                max_range_24 = self.range24_low[1] if "low" in test_type.value else self.range24_high[1]
-                current_slope12 = []
-                current_slope24 = []
-
-
-                for test in tests:
-                    gas_type = self.fms_entry.gas_type if self.fms_entry else "Xe"
-                    temperature = test.trp_temp
-                    inlet_pressure = test.inlet_pressure
-                    slope12 = test.slope12
-                    slope24 = test.slope24
-                    date = test.date
-
-                    if slope12 is None or slope24 is None:
-                        continue
-
-                    if test.fms_id == fms_id:
-                        label_temp = f"{temperature:.0f}"
-                        if "room" in temp_type.value and date < first_hot_date:
-                            label_temp = f"{temperature:.0f} (Pre Vibration)"
-                            first_room = False
-                        
-                        table_rows.append({
-                            "Temperature [degC]": label_temp,
-                            "Inlet Pressure [barA]": 10 if inlet_pressure < 100 else 190,
-                            "Slope 1-2 [mg/s]": slope12,
-                            "Slope 2-4 [mg/s]": slope24
-                        })
-
-                        current_slope12.append(slope12)
-                        current_slope24.append(slope24)
-                    else:
-                        slope12s.append(slope12)
-                        slope24s.append(slope24)
-
-                if test_type not in plot_dict:
-                    plot_dict[test_type] = {}
-
-                inlet_pressure_adj = 190 if inlet_pressure >= 100 else 10
-
-                plot_dict[test_type][temp_type] = {
-                    "slope12s": slope12s,
-                    "slope24s": slope24s,
-                    "min_range_12": min_range_12,
-                    "max_range_12": max_range_12,
-                    "min_range_24": min_range_24,
-                    "max_range_24": max_range_24,
-                    "current_slope12": current_slope12,
-                    "current_slope24": current_slope24,
-                    "title": (
-                        f"FMS SN: {self.fms_entry.fms_id} {gas_type}, "
-                        f"Inlet Pressure: {inlet_pressure_adj} [barA],\n "
-                        f"TRP Temp: {temperature} [degC]"
-                    ),
-                }
-
-        df = pd.DataFrame(table_rows)
-        slope_cols = ["Slope 1-2 [mg/s]", "Slope 2-4 [mg/s]"]
-
-        # Round slope columns for display
-        df[slope_cols] = df[slope_cols].round(1)
-
-        def style_slopes(val12, val24, pressure):
-            styles = []
-            if pressure == 10:
-                min_val_12, max_val_12 = self.range12_low
-                min_val_24, max_val_24 = self.range24_low
-            else:
-                min_val_12, max_val_12 = self.range12_high
-                min_val_24, max_val_24 = self.range24_high
-            for val, min_val, max_val in [(val12, min_val_12, max_val_12), (val24, min_val_24, max_val_24)]:
-                styles.append("background-color: green" if min_val <= val <= max_val else "background-color: red")
-            
-            return styles
-
-        # Apply only to slope columns
-        styled_df = df.style.apply(
-            lambda row: [style_slopes(df.loc[row.name, "Slope 1-2 [mg/s]"], df.loc[row.name, "Slope 2-4 [mg/s]"], df.loc[row.name, "Inlet Pressure [barA]"])[i] for i in range(2)],
-            axis=1,
-            subset=slope_cols
-        ).format({col: "{:.1f}" for col in slope_cols})
-
-        display(styled_df)
-
-        n_cols = 2
-        n_rows = (sum(len(v) for v in plot_dict.values()) + 1) // n_cols
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows), constrained_layout=True)
-        axes = axes.flatten()
-
-        items = [(tt, tp, d) for tt, sub in plot_dict.items() for tp, d in sub.items()]
-        handles, labels = [], []
-
-        for ax, (test_type, temp_type, data) in zip(axes, items):
-            slope12s = data["slope12s"]
-            slope24s = data["slope24s"]
-            current_slope12 = data["current_slope12"]
-            current_slope24 = data["current_slope24"]
-            min_range_12 = data["min_range_12"]
-            max_range_12 = data["max_range_12"]
-            min_range_24 = data["min_range_24"]
-            max_range_24 = data["max_range_24"]
-
-            ax.scatter(slope12s, slope24s, alpha=0.7)
-
-            ax.scatter(
-                current_slope12,
-                current_slope24,
-                color="red",
-                edgecolors="black",
-                label=f"FMS SN: {fms_id}",
-            )
-
-            ax.axvline(min_range_12, color="red", linestyle="-", label="Min 1-2 mg/s Spec")
-            ax.axvline(max_range_12, color="red", linestyle="--", label="Max 1-2 mg/s Spec")
-            ax.axhline(min_range_24, color="orange", linestyle="-", label="Min 2-4 mg/s Spec")
-            ax.axhline(max_range_24, color="orange", linestyle="--", label="Max 2-4 mg/s Spec")
-
-            ax.set_title(data["title"], wrap=True)
-            ax.set_xlabel("TV Slope 1-2 [mg/s W^-1]")
-            ax.set_ylabel("TV Slope 2-4 [mg/s W^-1]")
-            ax.grid(True)
-
-            for h, l in zip(*ax.get_legend_handles_labels()):
-                if l not in labels:
-                    handles.append(h)
-                    labels.append(l)
-
-        fig.legend(
-            handles, labels,
-            loc="upper center",
-            bbox_to_anchor=(0.5, 1.04),
-            ncol=3,
-            frameon=False
+        output = widgets.Output()
+        correction_checkbox = widgets.Checkbox(
+            value = False,
+            description = 'Show Inlet Pressure Correction:',
+            indent = False,
+            label_width = '150px'
         )
+        first_hot_date = next((t.date for type, temp_groups in grouped_functional_tests.items() for temp_type, tests in temp_groups.items() for t in tests if "hot" in temp_type.value and t.fms_id == fms_id), None)
+        
+        def on_correction_change(change: dict):
+            correction = correction_checkbox.value
+            correction_suffix = " (Corrected)" if correction else ""
+            plot_dict = {}
+            table_rows = []
+            with output:
+                output.clear_output()
+                for test_type, temp_groups in grouped_functional_tests.items():
+                    if "slope" not in test_type.value:
+                        continue
+                    
+                    for temp_type, tests in temp_groups.items():
+                        slope12s = []
+                        slope24s = []
+                        min_range_12 = self.range12_low[0] if "low" in test_type.value else self.range12_high[0]
+                        min_range_24 = self.range24_low[0] if "low" in test_type.value else self.range24_high[0]
+                        max_range_12 = self.range12_low[1] if "low" in test_type.value else self.range12_high[1]
+                        max_range_24 = self.range24_low[1] if "low" in test_type.value else self.range24_high[1]
+                        current_slope12 = []
+                        current_slope24 = []
 
-        plt.show()
+
+                        for test in tests:
+                            gas_type = self.fms_entry.gas_type if self.fms_entry else "Xe"
+                            temperature = test.trp_temp
+                            inlet_pressure = test.inlet_pressure
+                            slope12 = test.slope12
+                            slope24 = test.slope24
+                            correction_factor = test.slope_correction
+                            date = test.date
+
+                            if slope12 is None or slope24 is None:
+                                continue
+
+                            if test.fms_id == fms_id:
+                                label_temp = f"{temperature:.0f}"
+                                if "room" in temp_type.value and first_hot_date and date < first_hot_date:
+                                    label_temp = f"{temperature:.0f} (Pre Vibration)"
+                                    first_room = False
+                                
+                                table_rows.append({
+                                "Temperature [degC]": label_temp,
+                                "Inlet Pressure [barA]": 10 if inlet_pressure < 100 else 190,
+                                f"Slope 1-2 [mg/s W⁻¹ {gas_type}]": slope12/(correction_factor if correction else 1),
+                                f"Slope 2-4 [mg/s W⁻¹ {gas_type}]": slope24/(correction_factor if correction else 1),
+                                })
+
+                                current_slope12.append(slope12/(correction_factor if correction else 1))
+                                current_slope24.append(slope24/(correction_factor if correction else 1))
+                            else:
+                                slope12s.append(slope12)
+                                slope24s.append(slope24)
+
+                        if test_type not in plot_dict:
+                            plot_dict[test_type] = {}
+
+                        inlet_pressure_adj = 190 if inlet_pressure >= 100 else 10
+
+                        plot_dict[test_type][temp_type] = {
+                            "slope12s": slope12s,
+                            "slope24s": slope24s,
+                            "min_range_12": min_range_12,
+                            "max_range_12": max_range_12,
+                            "min_range_24": min_range_24,
+                            "max_range_24": max_range_24,
+                            "current_slope12": current_slope12,
+                            "current_slope24": current_slope24,
+                            "title": (
+                                f"FMS SN: {self.fms_entry.fms_id} {gas_type}, "
+                                f"Inlet Pressure: {inlet_pressure_adj} [barA],\n "
+                                f"TRP Temp: {temperature} [degC]{correction_suffix}"
+                            ),
+                        }
+
+                df = pd.DataFrame(table_rows)
+                slope_cols = [f"Slope 1-2 [mg/s W⁻¹ {gas_type}]", f"Slope 2-4 [mg/s W⁻¹ {gas_type}]"]
+
+                title = widgets.HTML(f"<h3>Slope Overview for FMS {self.fms_entry.fms_id}{correction_suffix}</h3>")
+                display(title)
+                # Round slope columns for display
+                df[slope_cols] = df[slope_cols].round(1)
+
+                def style_slopes(val12, val24, pressure):
+                    styles = []
+                    if pressure == 10:
+                        min_val_12, max_val_12 = self.range12_low
+                        min_val_24, max_val_24 = self.range24_low
+                    else:
+                        min_val_12, max_val_12 = self.range12_high
+                        min_val_24, max_val_24 = self.range24_high
+                    for val, min_val, max_val in [(val12, min_val_12, max_val_12), (val24, min_val_24, max_val_24)]:
+                        styles.append("background-color: green" if min_val <= val <= max_val else "background-color: red")
+                    
+                    return styles
+
+                # Apply only to slope columns
+                styled_df = df.style.apply(
+                    lambda row: [style_slopes(df.loc[row.name, f"Slope 1-2 [mg/s W⁻¹ {gas_type}]"], df.loc[row.name, f"Slope 2-4 [mg/s W⁻¹ {gas_type}]"], df.loc[row.name, "Inlet Pressure [barA]"])[i] for i in range(2)],
+                    axis=1,
+                    subset=slope_cols
+                ).format({col: "{:.1f}" for col in slope_cols})
+
+                display(styled_df)
+
+                n_cols = 2
+                n_rows = (sum(len(v) for v in plot_dict.values()) + 1) // n_cols
+                fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows), constrained_layout=True)
+                axes = axes.flatten()
+
+                items = [(tt, tp, d) for tt, sub in plot_dict.items() for tp, d in sub.items()]
+                handles, labels = [], []
+
+                for ax, (test_type, temp_type, data) in zip(axes, items):
+                    slope12s = data["slope12s"]
+                    slope24s = data["slope24s"]
+                    current_slope12 = data["current_slope12"]
+                    current_slope24 = data["current_slope24"]
+                    min_range_12 = data["min_range_12"]
+                    max_range_12 = data["max_range_12"]
+                    min_range_24 = data["min_range_24"]
+                    max_range_24 = data["max_range_24"]
+
+                    ax.scatter(slope12s, slope24s, alpha=0.7)
+
+                    ax.scatter(
+                        current_slope12,
+                        current_slope24,
+                        color="red",
+                        edgecolors="black",
+                        label=f"FMS SN: {fms_id}",
+                    )
+
+                    ax.axvline(min_range_12, color="red", linestyle="-", label="Min 1-2 mg/s Spec")
+                    ax.axvline(max_range_12, color="red", linestyle="--", label="Max 1-2 mg/s Spec")
+                    ax.axhline(min_range_24, color="orange", linestyle="-", label="Min 2-4 mg/s Spec")
+                    ax.axhline(max_range_24, color="orange", linestyle="--", label="Max 2-4 mg/s Spec")
+
+                    ax.set_title(data["title"], wrap=True)
+                    ax.set_xlabel(f"TV Slope 1-2 [mg/s W⁻¹ {gas_type}]")
+                    ax.set_ylabel(f"TV Slope 2-4 [mg/s W⁻¹ {gas_type}]")
+                    ax.grid(True)
+
+                    for h, l in zip(*ax.get_legend_handles_labels()):
+                        if l not in labels:
+                            handles.append(h)
+                            labels.append(l)
+
+                fig.legend(
+                    handles, labels,
+                    loc="upper center",
+                    bbox_to_anchor=(0.5, 1.04),
+                    ncol=3,
+                    frameon=False
+                )
+
+                plt.show()
+        correction_checkbox.observe(on_correction_change, names='value')
+        display(correction_checkbox)
+        display(output)
+        on_correction_change({})
 
     def part_investigation_query(self, part_type: str) -> None:
         """

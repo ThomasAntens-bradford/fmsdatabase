@@ -38,8 +38,6 @@ fmsdatabase/db/tv_status.py
 fmsdatabase/db/tv_test_results.py
 fmsdatabase/db/tv_test_runs.py
 fmsdatabase/db/tv_tvac.py
-fmsdatabase/json_cache/__init__.py
-fmsdatabase/json_cache/author.json
 fmsdatabase/json_cache/back_up_25-050.json
 fmsdatabase/json_cache/certifications_text.json
 fmsdatabase/json_cache/elec_assy_draft.json
@@ -49,7 +47,6 @@ fmsdatabase/json_cache/fms_test_draft.json
 fmsdatabase/json_cache/hpiv_ocr_certifications.json
 fmsdatabase/json_cache/lpt_ocr_certifications.json
 fmsdatabase/json_cache/manifold_ocr_certifications.json
-fmsdatabase/json_cache/operator.json
 fmsdatabase/json_cache/outlet_ocr_certifications.json
 fmsdatabase/json_cache/pages_processed.json
 fmsdatabase/json_cache/restrictor_ocr_certifications.json

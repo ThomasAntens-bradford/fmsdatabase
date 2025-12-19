@@ -69,6 +69,7 @@ class FMSFunctionalTests(Base):
     intercept24 = Column(Float, nullable=True)
     response_times = Column(JSON, nullable=True)
     response_regions = Column(JSON, nullable=True)
+    slope_correction = Column(Float, nullable=True)
 
     fms_main = relationship("FMSMain", back_populates="functional_tests")
     functional_results = relationship("FMSFunctionalResults", back_populates="main_tests")

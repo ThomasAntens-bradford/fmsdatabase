@@ -233,7 +233,7 @@ class HPIVData:
         }
         
 
-    def extract_hpiv_data(self) -> None:
+    def extract_hpiv_data(self, output_folder: str = "") -> None:
         """
         Extract HPIV test data from PDF documents.
         
@@ -253,13 +253,10 @@ class HPIVData:
             None: Updates self.test_results list with extracted data
         """
         #pdf_file = 'SSC-VS197-21-13_End Item Data Package_Rev.D_241219'
-        output_folder = "extracted_images"  # Folder to save images
-        split_report_folder = 'HPIV_reports\\'
-
+        split_report_folder = os.path.join(output_folder, 'HPIV_reports') if output_folder else 'HPIV_reports'
         pdf_document = fitz.open(self.pdf_file)
         if not os.path.exists(split_report_folder):
             os.makedirs(split_report_folder)
-
         new_acceptance_report = False
         for page_number in range(len(pdf_document)):
             page = pdf_document[page_number]
@@ -272,14 +269,16 @@ class HPIVData:
 
                 self.hpiv_parameters[HPIVParameters.HPIV_ID.value] = valve_serial
                 self.hpivs.add(valve_serial)
-                valve_folder = split_report_folder+valve_serial+'\\'
-                if not os.path.exists(valve_folder):
-                    os.mkdir(valve_folder)
-                
-                new_pdf =  fitz.open()
+
+                valve_folder = os.path.join(split_report_folder, valve_serial)
+                os.makedirs(valve_folder, exist_ok=True)
+                images_folder = os.path.join(valve_folder, "extracted_images") if output_folder else "extracted_images"
+                os.makedirs(images_folder, exist_ok=True)
+
+                new_pdf = fitz.open()
                 new_pdf.insert_pdf(pdf_document, from_page=page_number, to_page=page_number+24)
-                new_pdf.save(f'{valve_folder}Acceptance_report_valve_{valve_serial}.pdf')
-                
+                new_pdf.save(os.path.join(valve_folder, f'Acceptance_report_valve_{valve_serial}.pdf'))
+
                 image_count = 0
                 processed_images = set()  # Store hashes of already saved images
                 for newpdf_page_number in range(len(new_pdf)):
@@ -305,7 +304,7 @@ class HPIVData:
                         
                         # Save the image if it's unique
                         image_filename = f"page{page_number+1}_img{img_index+1}.{image_ext}"
-                        image_path = os.path.join(valve_folder, image_filename)
+                        image_path = os.path.join(images_folder, image_filename)
                     
                         with open(image_path, "wb") as img_file:
                             img_file.write(image_bytes)

@@ -5,6 +5,7 @@ import time
 import threading
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 # Third-party
 import fitz
@@ -190,12 +191,16 @@ class FMSDataStructure:
     """
     
     def __init__(self, excel_extraction: bool = True, test_path: str = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing",
-                 absolute_data_dir: str = r"C:\\Users\\TANTENS\\Documents\\fms_data_collection"):
+                 absolute_data_dir: str = r"C:\\Users\\TANTENS\\Documents\\fms_data_collection", local = True) -> None:
 
-        PACKAGE_DIR = os.path.dirname(__file__)
-        db_path = os.path.join(PACKAGE_DIR, "FMS_DataStructure.db")
+        if local:
+            local_appdata = Path(os.environ.get("LOCALAPPDATA", os.getcwd()))
+            app_data_dir = local_appdata / "FMSDatabase"
+            app_data_dir.mkdir(parents=True, exist_ok=True)
+            self.db_path = app_data_dir / "FMS_DataStructure.db"
 
-        self.engine = create_engine(f"sqlite:///{db_path}")
+            # Initialize the engine
+            self.engine = create_engine(f"sqlite:///{self.db_path}")
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         self.default_manifold_drawing = "20025.10.08-R4"    
@@ -211,12 +216,12 @@ class FMSDataStructure:
         year = datetime.now().year
         base_path = r"\\be.local\Doc\DocWork\Certificaten Bradford"
         self.test_path = test_path
-        self.fms_status_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS Status Overview_V0.xlsx"
-        self.anode_fr_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS FR Testing - 6\FMS-LP-BE-TRS-0021-i1-0 - FR Testing - Anode.xlsx"
-        self.cathode_fr_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS FR Testing - 6\FMS-LP-BE-TRS-0021-i1-0 - FR Testing - Cathode.xlsx"
-        self.tv_assembly_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\Thermal Valve Assembly Testing\TV Assembly Procedure_V1.xlsx"
-        self.tv_summary_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\Thermal Valve Assembly Testing\Thermal valve database_V2.xlsx"
-        self.tv_test_path = r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\Thermal Valve Assembly Testing"
+        self.fms_status_path = r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\LP FMS Status Overview_V0.xlsx"
+        self.anode_fr_path = r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\LP FMS FR Testing - 6\\FMS-LP-BE-TRS-0021-i1-0 - FR Testing - Anode.xlsx"
+        self.cathode_fr_path = r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\LP FMS FR Testing - 6\\FMS-LP-BE-TRS-0021-i1-0 - FR Testing - Cathode.xlsx"
+        self.tv_assembly_path = r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\Thermal Valve Assembly Testing\\TV Assembly Procedure_V1.xlsx"
+        self.tv_summary_path = r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\Thermal Valve Assembly Testing\\Thermal valve database_V2.xlsx"
+        self.tv_test_path = r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\Thermal Valve Assembly Testing"
         self.default_certifications_path = os.path.join(absolute_data_dir, "certifications")
         self.certification_folder = os.path.join(base_path, str(year))
 
@@ -377,6 +382,7 @@ class FMSDataStructure:
         """
         if not electrical_data:
             electrical_data = os.path.join(self.absolute_data_dir, "Electrical_data")
+            print(electrical_data)
         self.tv_sql.add_electrical_data(electrical_data = electrical_data)
 
     def listen_to_lpt_calibration(self, lpt_calibration: str = "") -> None:
@@ -426,8 +432,8 @@ class FMSDataStructure:
             cathode_fr_path (str): Path to the cathode FR test results Excel file.
         """
         if not anode_fr_path and not cathode_fr_path:
-            anode_paths = [self.anode_fr_path, r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS FR Testing - 8\XXX - FR Testing - Anode.xlsx"]
-            cathode_paths = [self.cathode_fr_path, r"\\be.local\Doc\DocWork\20025 - CHEOPS2 Low Power\70 - Testing\LP FMS FR Testing - 8\XXX - FR Testing - Cathode.xlsx"]
+            anode_paths = [self.anode_fr_path, r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\LP FMS FR Testing - 8\\XXX - FR Testing - Anode.xlsx"]
+            cathode_paths = [self.cathode_fr_path, r"\\be.local\Doc\DocWork\\20025 - CHEOPS2 Low Power\\70 - Testing\\LP FMS FR Testing - 8\\XXX - FR Testing - Cathode.xlsx"]
             
             for anode_path, cathode_path in zip(anode_paths, cathode_paths):
                 self.fr_sql.update_fr_test_results(self.excel_extraction, anode_path=anode_path, cathode_path=cathode_path)

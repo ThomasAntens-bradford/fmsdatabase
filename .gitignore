@@ -24,3 +24,4 @@ alembic.ini
 
 *.egg-info/
 *.fmsdatabase.egg-info/
+*build/
